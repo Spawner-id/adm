@@ -6,8 +6,14 @@ local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
 local character = script.Parent
-local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-local playerGui = player:WaitForChild("PlayerGui")
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart", 10)
+local playerGui = player:WaitForChild("PlayerGui", 10)
+
+-- Safety check
+if not humanoidRootPart or not playerGui then
+	warn("Failed to load character components")
+	return
+end
 
 -- Pet Library
 local PET_LIBRARY = {
@@ -349,8 +355,11 @@ end
 createSpawnerGUI()
 
 -- Cleanup on death
-character:WaitForChild("Humanoid").Died:Connect(function()
-	despawnPet()
-end)
+local humanoid = character:FindFirstChild("Humanoid")
+if humanoid then
+	humanoid.Died:Connect(function()
+		despawnPet()
+	end)
+end
 
 print("✅ Pet Spawner loaded! Use the GUI to spawn pets")
