@@ -1,8 +1,8 @@
--- Visual Pet Spawner with Input UI (LocalScript - place in StarterPlayer > StarterCharacterScripts)
+-- Visual Pet Spawner for Adopt Me Pets (LocalScript - place in StarterPlayer > StarterCharacterScripts)
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 local character = script.Parent
@@ -15,44 +15,10 @@ if not humanoidRootPart or not playerGui then
 	return
 end
 
--- Pet Library
-local PET_LIBRARY = {
-	["cat"] = {
-		Name = "Cat",
-		Type = "Ground",
-		MeshId = "rbxassetid://6828454591",
-		Size = Vector3.new(1.5, 1.5, 2),
-		Color = Color3.fromRGB(255, 170, 127),
-	},
-	["dog"] = {
-		Name = "Dog",
-		Type = "Ground",
-		MeshId = "rbxassetid://6828454591",
-		Size = Vector3.new(2, 1.8, 2.5),
-		Color = Color3.fromRGB(139, 90, 43),
-	},
-	["dragon"] = {
-		Name = "Dragon",
-		Type = "Flying",
-		MeshId = "rbxassetid://6828454591",
-		Size = Vector3.new(2.5, 2, 3),
-		Color = Color3.fromRGB(255, 50, 50),
-	},
-	["phoenix"] = {
-		Name = "Phoenix",
-		Type = "Flying",
-		MeshId = "rbxassetid://6828454591",
-		Size = Vector3.new(2.2, 2, 2.8),
-		Color = Color3.fromRGB(255, 140, 0),
-	},
-	["unicorn"] = {
-		Name = "Unicorn",
-		Type = "Ground",
-		MeshId = "rbxassetid://6828454591",
-		Size = Vector3.new(2, 2.2, 2.5),
-		Color = Color3.fromRGB(255, 192, 203),
-	},
-}
+-- Get player's pet inventory
+local clientData = require(ReplicatedStorage.ClientModules.Core.ClientData)
+local playerData = clientData.get_data()[tostring(player)]
+local petInventory = playerData.inventory.pets
 
 -- Settings
 local SETTINGS = {
@@ -71,38 +37,50 @@ local currentPet = nil
 local petConnection = nil
 local bobTime = 0
 
--- Create pet model
+-- Create pet model from Adopt Me data
 local function createPet(petData)
 	local pet = Instance.new("Part")
-	pet.Name = "Pet_" .. petData.Name
-	pet.Size = petData.Size
-	pet.Color = petData.Color
+	pet.Name = "Pet_" .. (petData.id or "Unknown")
+	pet.Size = Vector3.new(2, 2, 2)
+	pet.Color = Color3.fromRGB(255, 255, 255)
 	pet.Material = Enum.Material.SmoothPlastic
 	pet.CanCollide = false
 	pet.Anchored = true
 	pet.CastShadow = true
 	
-	local mesh = Instance.new("SpecialMesh")
-	mesh.MeshType = Enum.MeshType.FileMesh
-	mesh.MeshId = petData.MeshId
-	mesh.Scale = Vector3.new(1, 1, 1)
-	mesh.Parent = pet
+	-- Try to get pet appearance from properties
+	if petData.properties then
+		local props = petData.properties
+		
+		-- Add mesh if available
+		if props.mesh_id or props.MeshId then
+			local mesh = Instance.new("SpecialMesh")
+			mesh.MeshType = Enum.MeshType.FileMesh
+			mesh.MeshId = "rbxassetid://" .. (props.mesh_id or props.MeshId)
+			if props.texture_id or props.TextureId then
+				mesh.TextureId = "rbxassetid://" .. (props.texture_id or props.TextureId)
+			end
+			mesh.Parent = pet
+		end
+	end
 	
-	-- Add glow effect
-	local glow = Instance.new("Part")
-	glow.Name = "Glow"
-	glow.Size = petData.Size * 1.15
-	glow.Color = petData.Color
-	glow.Material = Enum.Material.Neon
-	glow.Transparency = 0.6
-	glow.CanCollide = false
-	glow.Anchored = true
-	glow.CastShadow = false
-	
-	local glowMesh = Instance.new("SpecialMesh")
-	glowMesh.MeshType = Enum.MeshType.Sphere
-	glowMesh.Parent = glow
-	glow.Parent = pet
+	-- Add neon glow if it's a neon pet
+	if petData.neon or (petData.properties and petData.properties.neon) then
+		local glow = Instance.new("Part")
+		glow.Name = "NeonGlow"
+		glow.Size = pet.Size * 1.15
+		glow.Color = Color3.fromRGB(100, 255, 255)
+		glow.Material = Enum.Material.Neon
+		glow.Transparency = 0.5
+		glow.CanCollide = false
+		glow.Anchored = true
+		glow.CastShadow = false
+		
+		local glowMesh = Instance.new("SpecialMesh")
+		glowMesh.MeshType = Enum.MeshType.Sphere
+		glowMesh.Parent = glow
+		glow.Parent = pet
+	end
 	
 	pet.Parent = workspace
 	return pet
@@ -120,23 +98,33 @@ local function despawnPet()
 	bobTime = 0
 end
 
--- Spawn new pet
-local function spawnPet(petName)
+-- Spawn pet by unique ID
+local function spawnPet(petUniqueId)
 	-- Despawn existing pet
 	despawnPet()
 	
-	-- Find pet data
-	local petData = PET_LIBRARY[petName:lower()]
+	-- Find pet in inventory by unique ID
+	local petData = nil
+	for i, v in pairs(petInventory) do
+		if v.unique == petUniqueId or i == petUniqueId then
+			petData = v
+			break
+		end
+	end
+	
 	if not petData then
-		warn("Pet not found: " .. petName)
-		return false, "Pet '" .. petName .. "' not found!"
+		warn("Pet not found: " .. tostring(petUniqueId))
+		return false, "Pet not found in inventory!"
 	end
 	
 	-- Create pet
 	local pet = createPet(petData)
+	local isFlying = petData.properties and (petData.properties.flyable or petData.properties.fly)
+	
 	currentPet = {
 		pet = pet,
 		data = petData,
+		isFlying = isFlying,
 	}
 	
 	-- Start following behavior
@@ -155,9 +143,8 @@ local function spawnPet(petName)
 		end
 		
 		local pet = currentPet.pet
-		local data = currentPet.data
-		local glow = pet:FindFirstChild("Glow")
-		local isFlying = data.Type == "Flying"
+		local glow = pet:FindFirstChild("NeonGlow")
+		local isFlying = currentPet.isFlying
 		
 		local rootPos = humanoidRootPart.Position
 		local rootCFrame = humanoidRootPart.CFrame
@@ -203,7 +190,8 @@ local function spawnPet(petName)
 		end
 	end)
 	
-	return true, "Spawned " .. petData.Name .. "!"
+	local petName = petData.id or petData.name or "Pet"
+	return true, "Spawned " .. petName .. "!"
 end
 
 -- Create Spawner GUI
@@ -216,8 +204,8 @@ local function createSpawnerGUI()
 	-- Main Frame
 	local mainFrame = Instance.new("Frame")
 	mainFrame.Name = "MainFrame"
-	mainFrame.Size = UDim2.new(0, 400, 0, 280)
-	mainFrame.Position = UDim2.new(0.5, -200, 0.5, -140)
+	mainFrame.Size = UDim2.new(0, 450, 0, 500)
+	mainFrame.Position = UDim2.new(0.5, -225, 0.5, -250)
 	mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
 	mainFrame.BorderSizePixel = 0
 	mainFrame.Parent = screenGui
@@ -231,7 +219,7 @@ local function createSpawnerGUI()
 	title.Size = UDim2.new(1, 0, 0, 60)
 	title.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
 	title.BorderSizePixel = 0
-	title.Text = "🐾 Pet Spawner"
+	title.Text = "🐾 My Pet Inventory"
 	title.TextColor3 = Color3.fromRGB(255, 255, 255)
 	title.TextSize = 26
 	title.Font = Enum.Font.GothamBold
@@ -241,60 +229,130 @@ local function createSpawnerGUI()
 	titleCorner.CornerRadius = UDim.new(0, 15)
 	titleCorner.Parent = title
 	
-	-- Input Label
-	local inputLabel = Instance.new("TextLabel")
-	inputLabel.Size = UDim2.new(1, -40, 0, 30)
-	inputLabel.Position = UDim2.new(0, 20, 0, 80)
-	inputLabel.BackgroundTransparency = 1
-	inputLabel.Text = "Enter Pet Name:"
-	inputLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-	inputLabel.TextSize = 16
-	inputLabel.Font = Enum.Font.Gotham
-	inputLabel.TextXAlignment = Enum.TextXAlignment.Left
-	inputLabel.Parent = mainFrame
+	-- Scroll Frame for pets
+	local scrollFrame = Instance.new("ScrollingFrame")
+	scrollFrame.Size = UDim2.new(1, -20, 1, -140)
+	scrollFrame.Position = UDim2.new(0, 10, 0, 70)
+	scrollFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+	scrollFrame.BorderSizePixel = 0
+	scrollFrame.ScrollBarThickness = 8
+	scrollFrame.Parent = mainFrame
 	
-	-- Text Input Box
-	local textBox = Instance.new("TextBox")
-	textBox.Size = UDim2.new(1, -40, 0, 45)
-	textBox.Position = UDim2.new(0, 20, 0, 115)
-	textBox.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
-	textBox.BorderSizePixel = 0
-	textBox.PlaceholderText = "e.g., cat, dog, dragon..."
-	textBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
-	textBox.Text = ""
-	textBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-	textBox.TextSize = 18
-	textBox.Font = Enum.Font.Gotham
-	textBox.ClearTextOnFocus = false
-	textBox.Parent = mainFrame
+	local scrollCorner = Instance.new("UICorner")
+	scrollCorner.CornerRadius = UDim.new(0, 8)
+	scrollCorner.Parent = scrollFrame
 	
-	local textBoxCorner = Instance.new("UICorner")
-	textBoxCorner.CornerRadius = UDim.new(0, 8)
-	textBoxCorner.Parent = textBox
+	local listLayout = Instance.new("UIListLayout")
+	listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	listLayout.Padding = UDim.new(0, 8)
+	listLayout.Parent = scrollFrame
 	
-	-- Spawn Button
-	local spawnBtn = Instance.new("TextButton")
-	spawnBtn.Size = UDim2.new(0, 160, 0, 45)
-	spawnBtn.Position = UDim2.new(0, 20, 0, 175)
-	spawnBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 100)
-	spawnBtn.BorderSizePixel = 0
-	spawnBtn.Text = "✓ Spawn Pet"
-	spawnBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	spawnBtn.TextSize = 18
-	spawnBtn.Font = Enum.Font.GothamBold
-	spawnBtn.Parent = mainFrame
+	local listPadding = Instance.new("UIPadding")
+	listPadding.PaddingTop = UDim.new(0, 10)
+	listPadding.PaddingLeft = UDim.new(0, 10)
+	listPadding.PaddingRight = UDim.new(0, 10)
+	listPadding.Parent = scrollFrame
 	
-	local spawnBtnCorner = Instance.new("UICorner")
-	spawnBtnCorner.CornerRadius = UDim.new(0, 8)
-	spawnBtnCorner.Parent = spawnBtn
+	-- Create pet list items
+	local petCount = 0
+	for uniqueId, petData in pairs(petInventory) do
+		petCount = petCount + 1
+		
+		local petButton = Instance.new("TextButton")
+		petButton.Size = UDim2.new(1, -10, 0, 60)
+		petButton.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+		petButton.BorderSizePixel = 0
+		petButton.Text = ""
+		petButton.AutoButtonColor = false
+		petButton.Parent = scrollFrame
+		
+		local btnCorner = Instance.new("UICorner")
+		btnCorner.CornerRadius = UDim.new(0, 8)
+		btnCorner.Parent = petButton
+		
+		-- Pet name
+		local petName = Instance.new("TextLabel")
+		petName.Size = UDim2.new(1, -70, 0, 25)
+		petName.Position = UDim2.new(0, 15, 0, 8)
+		petName.BackgroundTransparency = 1
+		petName.Text = petData.id or petData.name or "Pet #" .. petCount
+		petName.TextColor3 = Color3.fromRGB(255, 255, 255)
+		petName.TextSize = 18
+		petName.Font = Enum.Font.GothamBold
+		petName.TextXAlignment = Enum.TextXAlignment.Left
+		petName.Parent = petButton
+		
+		-- Pet info
+		local petInfo = Instance.new("TextLabel")
+		petInfo.Size = UDim2.new(1, -70, 0, 20)
+		petInfo.Position = UDim2.new(0, 15, 0, 33)
+		petInfo.BackgroundTransparency = 1
+		local infoText = "Unique: " .. tostring(uniqueId)
+		if petData.properties then
+			if petData.properties.flyable then
+				infoText = infoText .. " | ✈️ Flyable"
+			end
+			if petData.properties.rideable then
+				infoText = infoText .. " | 🏇 Rideable"
+			end
+			if petData.properties.neon or petData.neon then
+				infoText = infoText .. " | ✨ Neon"
+			end
+		end
+		petInfo.Text = infoText
+		petInfo.TextColor3 = Color3.fromRGB(150, 150, 150)
+		petInfo.TextSize = 12
+		petInfo.Font = Enum.Font.Gotham
+		petInfo.TextXAlignment = Enum.TextXAlignment.Left
+		petInfo.Parent = petButton
+		
+		-- Spawn button
+		local spawnBtn = Instance.new("TextButton")
+		spawnBtn.Size = UDim2.new(0, 50, 0, 40)
+		spawnBtn.Position = UDim2.new(1, -60, 0.5, -20)
+		spawnBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 100)
+		spawnBtn.Text = "✓"
+		spawnBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		spawnBtn.TextSize = 20
+		spawnBtn.Font = Enum.Font.GothamBold
+		spawnBtn.Parent = petButton
+		
+		local spawnBtnCorner = Instance.new("UICorner")
+		spawnBtnCorner.CornerRadius = UDim.new(0, 6)
+		spawnBtnCorner.Parent = spawnBtn
+		
+		-- Click to spawn
+		spawnBtn.MouseButton1Click:Connect(function()
+			local success, message = spawnPet(uniqueId)
+			if success then
+				statusLabel.Text = message
+				statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+			else
+				statusLabel.Text = message
+				statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+			end
+		end)
+		
+		-- Hover effect
+		petButton.MouseEnter:Connect(function()
+			petButton.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+		end)
+		
+		petButton.MouseLeave:Connect(function()
+			petButton.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+		end)
+	end
+	
+	-- Update canvas size
+	scrollFrame.CanvasSize = UDim2.new(0, 0, 0, petCount * 68 + 20)
 	
 	-- Despawn Button
 	local despawnBtn = Instance.new("TextButton")
-	despawnBtn.Size = UDim2.new(0, 160, 0, 45)
-	despawnBtn.Position = UDim2.new(1, -180, 0, 175)
+	despawnBtn.Size = UDim2.new(1, -40, 0, 50)
+	despawnBtn.Position = UDim2.new(0, 20, 1, -65)
 	despawnBtn.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
 	despawnBtn.BorderSizePixel = 0
-	despawnBtn.Text = "✕ Remove Pet"
+	despawnBtn.Text = "✕ Remove Current Pet"
 	despawnBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 	despawnBtn.TextSize = 18
 	despawnBtn.Font = Enum.Font.GothamBold
@@ -305,53 +363,28 @@ local function createSpawnerGUI()
 	despawnBtnCorner.Parent = despawnBtn
 	
 	-- Status Label
-	local statusLabel = Instance.new("TextLabel")
+	statusLabel = Instance.new("TextLabel")
 	statusLabel.Size = UDim2.new(1, -40, 0, 30)
-	statusLabel.Position = UDim2.new(0, 20, 0, 235)
+	statusLabel.Position = UDim2.new(0, 20, 1, -100)
 	statusLabel.BackgroundTransparency = 1
-	statusLabel.Text = "Available: cat, dog, dragon, phoenix, unicorn"
+	statusLabel.Text = "Select a pet to spawn"
 	statusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
-	statusLabel.TextSize = 12
+	statusLabel.TextSize = 14
 	statusLabel.Font = Enum.Font.Gotham
-	statusLabel.TextWrapped = true
 	statusLabel.Parent = mainFrame
 	
-	-- Spawn Button Click
-	spawnBtn.MouseButton1Click:Connect(function()
-		local petName = textBox.Text
-		if petName == "" then
-			statusLabel.Text = "⚠️ Please enter a pet name!"
-			statusLabel.TextColor3 = Color3.fromRGB(255, 150, 0)
-			return
-		end
-		
-		local success, message = spawnPet(petName)
-		statusLabel.Text = message
-		if success then
-			statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-			textBox.Text = ""
-		else
-			statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-		end
-	end)
-	
-	-- Despawn Button Click
+	-- Despawn button click
 	despawnBtn.MouseButton1Click:Connect(function()
 		despawnPet()
 		statusLabel.Text = "Pet removed!"
 		statusLabel.TextColor3 = Color3.fromRGB(255, 150, 150)
 	end)
 	
-	-- Enter key to spawn
-	textBox.FocusLost:Connect(function(enterPressed)
-		if enterPressed then
-			spawnBtn.MouseButton1Click:Fire()
-		end
-	end)
-	
 	screenGui.Parent = playerGui
+	print("✅ Pet Spawner GUI loaded with " .. petCount .. " pets!")
 end
 
+-- Create the GUI
 createSpawnerGUI()
 
 -- Cleanup on death
@@ -361,5 +394,3 @@ if humanoid then
 		despawnPet()
 	end)
 end
-
-print("✅ Pet Spawner loaded! Use the GUI to spawn pets")
